@@ -1,7 +1,6 @@
 ﻿using fin.math;
 using fin.model;
 using fin.ui.rendering.gl.model;
-using fin.util.enumerables;
 
 using Nito.Disposables;
 
@@ -46,15 +45,24 @@ public sealed partial class GlBufferManager {
     var eboIndices = new List<int>();
     var eboInstanceCount = 0;
     for (var i = 0; i < mergedPrimitives.Count; ++i) {
-      var mergedPrimitive = mergedPrimitives[i];
+      MergedPrimitive mergedPrimitive = mergedPrimitives[i];
 
       bool isArray;
       int vertexOffset, vertexCount;
+      FinPrimitiveType primitiveType = mergedPrimitive.PrimitiveType;
+      bool isFlipped = mergedPrimitive.IsFlipped;
 
-      // Nice, can reuse an existing primitive's range
+      // Nice, can reuse an existing primitive's range - but we need to make
+      // sure we inherit primitiveType and isFlipped from that one, and that we
+      // update isArray/vertexOffset/vertexCount appropriately
       if (mergedPrimitive.Base != null) {
-        var primitive = mergedPrimitive.Vertices.First().Item1;
-        (isArray, vertexOffset, vertexCount) = rangeByPrimitive[primitive];
+        primitiveType = mergedPrimitive.Base.PrimitiveType;
+        isFlipped = mergedPrimitive.Base.IsFlipped;
+
+        IEnumerable<IReadOnlyPrimitive> primitives = mergedPrimitive.Vertices.Select(t => t.Item1);
+        (isArray, vertexOffset, _) = rangeByPrimitive[primitives.First()];
+        (_, int lastOffset, int lastCount) = rangeByPrimitive[primitives.Last()];
+        vertexCount = lastOffset + lastCount - vertexOffset;
       }
       // Otherwise, find the new range
       else {
@@ -93,16 +101,11 @@ public sealed partial class GlBufferManager {
         }
       }
 
-      var primitives = mergedPrimitive.Vertices.Select(v => v.Item1)
-                                      .Collapsed()
-                                      .ToArray();
-
       if (isArray) {
         renderers[i] = new GlBufferRenderer(
             this.VaoId,
-            primitives,
-            mergedPrimitive.PrimitiveType,
-            mergedPrimitive.IsFlipped,
+            primitiveType,
+            isFlipped,
             null,
             null,
             vertexOffset,
@@ -110,9 +113,8 @@ public sealed partial class GlBufferManager {
       } else {
         renderers[i] = new GlBufferRenderer(
             this.VaoId,
-            primitives,
-            mergedPrimitive.PrimitiveType,
-            mergedPrimitive.IsFlipped,
+            primitiveType,
+            isFlipped,
             eboId,
             eboDisposable,
             vertexOffset,
@@ -143,7 +145,6 @@ public sealed partial class GlBufferManager {
 
   public sealed class GlBufferRenderer(
       int vaoId,
-      IReadOnlyList<IReadOnlyPrimitive> primitives,
       FinPrimitiveType primitiveType,
       bool isFlipped,
       int? eboId,
@@ -161,8 +162,6 @@ public sealed partial class GlBufferManager {
             _ => throw new ArgumentOutOfRangeException()
         };
 
-    private PrimitiveMetadataSsbo? selectionSsbo_;
-
     ~GlBufferRenderer() => this.ReleaseUnmanagedResources_();
 
     public void Dispose() {
@@ -170,15 +169,9 @@ public sealed partial class GlBufferManager {
       GC.SuppressFinalize(this);
     }
 
-    private void ReleaseUnmanagedResources_() {
-      this.selectionSsbo_?.Dispose();
-      eboDisposable?.Dispose();
-    }
+    private void ReleaseUnmanagedResources_() => eboDisposable?.Dispose();
 
     public void Render() {
-      this.selectionSsbo_ ??= new PrimitiveMetadataSsbo(primitives);
-      this.selectionSsbo_.Bind();
-
       GlUtil.SetFlipFaces(isFlipped);
       GlUtil.BindVao(vaoId);
 

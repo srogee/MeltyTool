@@ -29,6 +29,7 @@ public sealed class TextureTransformManager : ITextureTransformManager {
       twoDMatrix, Matrix4x4 threeDMatrix)> texturesToMatrices_ = new();
 
   private bool hasInit_;
+  private bool hasScrollingTextures_;
   private (IReadOnlyModelAnimation, float)? previousAnimationAndFrame_;
 
   public void Clear() => this.texturesToMatrices_.Clear();
@@ -36,19 +37,26 @@ public sealed class TextureTransformManager : ITextureTransformManager {
   public void CalculateMatrices(
       IReadOnlyList<IReadOnlyTexture> textures,
       (IReadOnlyModelAnimation, float)? animationAndFrame) {
-    if (this.hasInit_ && this.previousAnimationAndFrame_ == animationAndFrame) {
+    // Scrolling textures change over time even if the animation/frame
+    // doesn't, so their matrices always need to be recalculated.
+    if (this.hasInit_ &&
+        !this.hasScrollingTextures_ &&
+        this.previousAnimationAndFrame_ == animationAndFrame) {
       return;
     }
 
     this.hasInit_ = true;
+    this.hasScrollingTextures_ = false;
     this.previousAnimationAndFrame_ = animationAndFrame;
-    
+
     var animation = animationAndFrame?.Item1;
     var frame = animationAndFrame?.Item2;
 
     // Intentionally looping by index to avoid allocating an enumerator.
     for (var i = 0; i < textures.Count; ++i) {
       var texture = textures[i];
+      this.hasScrollingTextures_ |= texture is IScrollingTexture;
+
       Vector3? animationTranslation = null;
       Vector3? animationRotation = null;
       Vector3? animationScale = null;
